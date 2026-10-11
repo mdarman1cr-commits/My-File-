@@ -166,14 +166,10 @@ jobs:
           
           echo "Creating GitHub Release with tag: $RELEASE_TAG and title: $RELEASE_TITLE"
           
+          RELEASE_NOTES=$(printf "### Automated Debug APK Build\n\nThis is an automatically generated debug APK.\n- **Built by:** GitHub Actions\n- **Workflow Run Number:** %s\n- **Run Attempt:** %s\n- **Source Commit SHA:** %s\n- **Notice:** This APK is intended for testing and development. This APK is not a Play Store release." "${{ github.run_number }}" "${{ github.run_attempt }}" "${{ github.sha }}")
+          
           gh release create "$RELEASE_TAG" "$PREPARED_APK" \
             --title "$RELEASE_TITLE" \
             --target "${{ github.sha }}" \
-            --notes "### Automated Debug APK Build
+            --notes "$RELEASE_NOTES"
 
-This is an automatically generated debug APK.
-- **Built by:** GitHub Actions
-- **Workflow Run Number:** ${{ github.run_number }}
-- **Run Attempt:** ${{ github.run_attempt }}
-- **Source Commit SHA:** ${{ github.sha }}
-- **Notice:** This APK is intended for testing and development. This APK is not a Play Store release."
