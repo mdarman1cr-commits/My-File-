@@ -1,0 +1,6 @@
+{
+  "name": "My File Explorer",
+  "description": "Smart, secure offline file manager with zip archive management, encrypted safe vault, document scanning, automated OCR tagging, local encrypted backups, and customizable dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
