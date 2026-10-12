@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">My File Explorer</string>
+    <string name="app_name">My File</string>
     <string name="tagline">Secure, Smart &amp; Offline File Manager</string>
     <string name="nav_dashboard">Dashboard</string>
     <string name="nav_files">Files</string>

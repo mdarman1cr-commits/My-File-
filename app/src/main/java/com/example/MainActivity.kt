@@ -140,7 +140,7 @@ class MainActivity : ComponentActivity() {
                 content = uiState.previewDecryptedContent,
                 onDismiss = { viewModel.closeFilePreview() },
                 onSaveContent = { updatedText ->
-                  viewModel.saveFileContent(previewItem.id, updatedText)
+                  viewModel.saveFileContent(previewItem, updatedText)
                 }
               )
             }
@@ -148,6 +148,11 @@ class MainActivity : ComponentActivity() {
         }
       }
     }
+  }
+
+  override fun onResume() {
+    super.onResume()
+    viewModel.checkPermissionState()
   }
 }
 

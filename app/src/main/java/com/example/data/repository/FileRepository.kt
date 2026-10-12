@@ -4,10 +4,14 @@ import android.content.Context
 import com.example.data.local.AppDatabase
 import com.example.data.local.BackupEntryEntity
 import com.example.data.local.FileItemEntity
+import com.example.data.model.FileCategory
 import com.example.data.model.StorageBreakdown
 import com.example.data.security.EncryptionManager
+import com.example.data.storage.RealDeviceFileManager
+import com.example.data.storage.StoragePermissionManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -23,272 +27,8 @@ class FileRepository(private val context: Context) {
   }
 
   suspend fun initializeSampleDataIfNeeded() = withContext(Dispatchers.IO) {
-    if (dao.getTotalFileCount() == 0) {
-      seedDefaultExplorerData()
-    }
-  }
-
-  private suspend fun seedDefaultExplorerData() {
-    val now = System.currentTimeMillis()
-
-    // 1. Root Folders
-    val personalFolderId = dao.insert(
-      FileItemEntity(
-        name = "Personal Documents",
-        extension = "folder",
-        isDirectory = true,
-        parentFolderId = null,
-        category = "DOCUMENTS",
-        sizeBytes = 18_420_000L,
-        createdAt = now - 86400000L * 5,
-        updatedAt = now - 3600000L * 2
-      )
-    )
-
-    val scansFolderId = dao.insert(
-      FileItemEntity(
-        name = "Scanned Receipts & Bills",
-        extension = "folder",
-        isDirectory = true,
-        parentFolderId = null,
-        category = "SCANS",
-        sizeBytes = 9_640_000L,
-        createdAt = now - 86400000L * 4,
-        updatedAt = now - 3600000L * 5
-      )
-    )
-
-    val workFolderId = dao.insert(
-      FileItemEntity(
-        name = "Work & Contracts",
-        extension = "folder",
-        isDirectory = true,
-        parentFolderId = null,
-        category = "DOCUMENTS",
-        sizeBytes = 24_800_000L,
-        createdAt = now - 86400000L * 10,
-        updatedAt = now - 86400000L
-      )
-    )
-
-    val mediaFolderId = dao.insert(
-      FileItemEntity(
-        name = "Project Images",
-        extension = "folder",
-        isDirectory = true,
-        parentFolderId = null,
-        category = "IMAGES",
-        sizeBytes = 42_100_000L,
-        createdAt = now - 86400000L * 7,
-        updatedAt = now - 86400000L * 3
-      )
-    )
-
-    // 2. Sample Files
-    dao.insert(
-      FileItemEntity(
-        name = "Office_Equipment_Invoice.pdf",
-        extension = "pdf",
-        isDirectory = false,
-        parentFolderId = scansFolderId,
-        category = "SCANS",
-        sizeBytes = 3_420_000L,
-        content = "Invoice Number: INV-2026-89421\nVendor: Office Supplies Direct Inc.\nSubtotal: $180.00\nTotal: $194.85\nStatus: PAID",
-        ocrTags = "#Invoice,#Finance,#Tax,#OCRVerified",
-        filterApplied = "HIGH_CONTRAST",
-        isFavorite = true,
-        createdAt = now - 86400000L * 2,
-        updatedAt = now - 86400000L * 2
-      )
-    )
-
-    dao.insert(
-      FileItemEntity(
-        name = "Apartment_Lease_Agreement.pdf",
-        extension = "pdf",
-        isDirectory = false,
-        parentFolderId = personalFolderId,
-        category = "DOCUMENTS",
-        sizeBytes = 8_900_000L,
-        content = "RESIDENTIAL LEASE AGREEMENT\nTerm: Nov 1, 2026 to Oct 31, 2027\nMonthly Rent: $2,400\nSecurity Deposit: $2,400\nSignatures: Verified",
-        ocrTags = "#Contract,#Legal,#Important,#Lease",
-        filterApplied = "BW_CLEAN",
-        isFavorite = true,
-        createdAt = now - 86400000L * 3,
-        updatedAt = now - 86400000L * 3
-      )
-    )
-
-    dao.insert(
-      FileItemEntity(
-        name = "Travel_Itinerary_Tokyo.pdf",
-        extension = "pdf",
-        isDirectory = false,
-        parentFolderId = personalFolderId,
-        category = "DOCUMENTS",
-        sizeBytes = 2_150_000L,
-        content = "Flight SG-482 SFO to HND. Hotel: Shinjuku Prince. Booking Code: 7XQ9KL.",
-        ocrTags = "#Travel,#Booking,#Tickets",
-        isFavorite = false,
-        createdAt = now - 3600000L * 8,
-        updatedAt = now - 3600000L * 8
-      )
-    )
-
-    dao.insert(
-      FileItemEntity(
-        name = "Office_Depot_Receipt.png",
-        extension = "png",
-        isDirectory = false,
-        parentFolderId = scansFolderId,
-        category = "SCANS",
-        sizeBytes = 1_840_000L,
-        content = "Store #0481. Order #9410. Items: Ergonomic Chair ($240), Desk Lamp ($45). Total: $285.00 Visa 4920.",
-        ocrTags = "#Receipt,#Expense,#Shopping,#OCRVerified",
-        filterApplied = "BW_CLEAN",
-        createdAt = now - 3600000L * 24,
-        updatedAt = now - 3600000L * 24
-      )
-    )
-
-    dao.insert(
-      FileItemEntity(
-        name = "Project_Architecture_Notes.md",
-        extension = "md",
-        isDirectory = false,
-        parentFolderId = workFolderId,
-        category = "DOCUMENTS",
-        sizeBytes = 48_000L,
-        content = "# Architecture Specifications\n\n- Offline-first Room storage\n- AES-256-GCM encrypted secure vault\n- Automated OCR indexing & multi-device sync\n- Minimalist dark & light accessibility UI",
-        ocrTags = "#Notes,#Work,#Architecture",
-        createdAt = now - 3600000L * 3,
-        updatedAt = now - 1800000L
-      )
-    )
-
-    // 3. Encrypted Safe Vault Items (End-to-End Encrypted)
-    val encryptedSeedPhrase = EncryptionManager.encrypt(
-      "1. ripple 2. flame 3. horizon 4. galaxy 5. fortress 6. whisper 7. summit 8. crystal 9. anchor 10. velvet 11. solar 12. pulse",
-      "1234"
-    )
-
-    dao.insert(
-      FileItemEntity(
-        name = "Master_Recovery_Seed_Key.txt",
-        extension = "txt",
-        isDirectory = false,
-        parentFolderId = null,
-        category = "VAULT",
-        sizeBytes = 16_000L,
-        content = encryptedSeedPhrase,
-        isEncrypted = true,
-        isInVault = true,
-        ocrTags = "#Confidential,#Vault,#Security",
-        createdAt = now - 86400000L * 6,
-        updatedAt = now - 86400000L * 6
-      )
-    )
-
-    val encryptedPassport = EncryptionManager.encrypt(
-      "CONFIDENTIAL PASSPORT SCAN\nDocument ID: USA-A98421094\nHolder: Arman / M\nExpiry: October 2034\nStatus: Secure Vault Protected",
-      "1234"
-    )
-
-    dao.insert(
-      FileItemEntity(
-        name = "Biometric_Passport_Card.enc",
-        extension = "enc",
-        isDirectory = false,
-        parentFolderId = null,
-        category = "VAULT",
-        sizeBytes = 5_240_000L,
-        content = encryptedPassport,
-        isEncrypted = true,
-        isInVault = true,
-        ocrTags = "#IDCard,#Confidential,#Vault,#Passport",
-        createdAt = now - 86400000L * 8,
-        updatedAt = now - 86400000L * 8
-      )
-    )
-
-    // Additional category seed items for Videos, Audio, Downloads, and Zip/APK
-    dao.insert(
-      FileItemEntity(
-        name = "Tokyo_Drone_Tour_4K.mp4",
-        extension = "mp4",
-        isDirectory = false,
-        parentFolderId = null,
-        category = "VIDEOS",
-        sizeBytes = 284_000_000L,
-        createdAt = now - 86400000L * 2,
-        updatedAt = now - 86400000L * 2
-      )
-    )
-
-    dao.insert(
-      FileItemEntity(
-        name = "Voice_Memo_Meeting_Notes.m4a",
-        extension = "m4a",
-        isDirectory = false,
-        parentFolderId = null,
-        category = "AUDIO",
-        sizeBytes = 14_200_000L,
-        createdAt = now - 3600000L * 12,
-        updatedAt = now - 3600000L * 12
-      )
-    )
-
-    dao.insert(
-      FileItemEntity(
-        name = "Kotlin_Compose_Guide_v2.pdf",
-        extension = "pdf",
-        isDirectory = false,
-        parentFolderId = null,
-        category = "DOWNLOADS",
-        sizeBytes = 8_400_000L,
-        createdAt = now - 3600000L * 6,
-        updatedAt = now - 3600000L * 6
-      )
-    )
-
-    dao.insert(
-      FileItemEntity(
-        name = "Project_Archive_2026.zip",
-        extension = "zip",
-        isDirectory = false,
-        parentFolderId = null,
-        category = "ARCHIVES",
-        sizeBytes = 56_800_000L,
-        createdAt = now - 86400000L * 3,
-        updatedAt = now - 86400000L * 3
-      )
-    )
-
-    dao.insert(
-      FileItemEntity(
-        name = "FileExplorer_Pro_Release.apk",
-        extension = "apk",
-        isDirectory = false,
-        parentFolderId = null,
-        category = "ARCHIVES",
-        sizeBytes = 22_500_000L,
-        createdAt = now - 86400000L * 1,
-        updatedAt = now - 86400000L * 1
-      )
-    )
-
-    // Seed initial backup entry
-    dao.insertBackup(
-      BackupEntryEntity(
-        filename = "Backup_Auto_Encrypted_Init.mfe",
-        createdAt = now - 86400000L * 1,
-        fileCount = 7,
-        sizeBytes = 64_800_000L,
-        encryptionAlgorithm = "AES-256-GCM",
-        passphraseHint = "Master Vault PIN (1234)",
-        checksum = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-      )
-    )
+    // Completely remove all dummy/demo data from the database
+    dao.clearDemoFiles()
   }
 
   fun getItemsInFolder(folderId: Long?): Flow<List<FileItemEntity>> =
@@ -586,35 +326,79 @@ class FileRepository(private val context: Context) {
     dao.deleteBackup(backup)
   }
 
-  // Storage analytics flow
-  val storageBreakdownFlow: Flow<StorageBreakdown> = dao.getAllActiveFiles().map { files ->
-    var usedBytes = 0L
-    var docBytes = 0L
-    var imgBytes = 0L
-    var scanBytes = 0L
-    var vaultBytes = 0L
-    var otherBytes = 0L
+  // Storage analytics flow - computed from real device storage
+  val storageBreakdownFlow: Flow<StorageBreakdown> = flow {
+    emit(RealDeviceFileManager.getStorageBreakdown(context))
+  }
 
-    for (f in files) {
-      val size = f.sizeBytes
-      usedBytes += size
-      when {
-        f.isInVault -> vaultBytes += size
-        f.category == "DOCUMENTS" -> docBytes += size
-        f.category == "IMAGES" -> imgBytes += size
-        f.category == "SCANS" -> scanBytes += size
-        else -> otherBytes += size
-      }
+  fun hasStoragePermission(): Boolean =
+    StoragePermissionManager.hasStoragePermission(context)
+
+  fun requestStoragePermission() =
+    StoragePermissionManager.requestStoragePermission(context)
+
+  fun openAppSettings() =
+    StoragePermissionManager.openAppSettings(context)
+
+  suspend fun getRealDeviceFiles(path: String?): List<FileItemEntity> = withContext(Dispatchers.IO) {
+    if (hasStoragePermission()) {
+      RealDeviceFileManager.listFilesInDirectory(path)
+    } else {
+      emptyList()
     }
+  }
 
-    StorageBreakdown(
-      totalCapacityBytes = 128L * 1024 * 1024 * 1024,
-      usedBytes = usedBytes + 14_200_000_000L, // simulated system + apps storage
-      documentBytes = docBytes,
-      imageBytes = imgBytes,
-      scanBytes = scanBytes,
-      vaultBytes = vaultBytes,
-      otherBytes = otherBytes
-    )
+  suspend fun getRealCategoryFiles(category: FileCategory): List<FileItemEntity> = withContext(Dispatchers.IO) {
+    if (hasStoragePermission()) {
+      RealDeviceFileManager.listFilesForCategory(context, category)
+    } else {
+      emptyList()
+    }
+  }
+
+  suspend fun searchRealFiles(query: String, path: String?): List<FileItemEntity> = withContext(Dispatchers.IO) {
+    if (hasStoragePermission()) {
+      RealDeviceFileManager.searchFiles(query, path)
+    } else {
+      emptyList()
+    }
+  }
+
+  suspend fun createRealFolder(parentPath: String?, name: String): Boolean = withContext(Dispatchers.IO) {
+    RealDeviceFileManager.createFolder(parentPath, name)
+  }
+
+  suspend fun createRealTextFile(parentPath: String?, name: String, content: String): Boolean = withContext(Dispatchers.IO) {
+    RealDeviceFileManager.createTextFile(parentPath, name, content)
+  }
+
+  suspend fun renameRealFile(filePath: String, newName: String): String? = withContext(Dispatchers.IO) {
+    RealDeviceFileManager.renameFile(filePath, newName)
+  }
+
+  suspend fun deleteRealFile(filePath: String): Boolean = withContext(Dispatchers.IO) {
+    RealDeviceFileManager.deleteFile(filePath)
+  }
+
+  suspend fun readRealFileText(filePath: String): String? = withContext(Dispatchers.IO) {
+    RealDeviceFileManager.readFileText(filePath)
+  }
+
+  suspend fun saveRealFileText(filePath: String, text: String): Boolean = withContext(Dispatchers.IO) {
+    RealDeviceFileManager.saveFileText(filePath, text)
+  }
+
+  fun openFileExternally(filePath: String): Boolean {
+    return try {
+      val intent = RealDeviceFileManager.getOpenWithIntent(context, filePath)
+      if (intent != null) {
+        context.startActivity(intent)
+        true
+      } else {
+        false
+      }
+    } catch (e: Exception) {
+      false
+    }
   }
 }

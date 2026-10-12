@@ -14,7 +14,9 @@ import com.example.data.ocr.DocumentOcrEngine
 import com.example.data.ocr.OcrScanResult
 import com.example.data.repository.FileRepository
 import com.example.data.security.EncryptionManager
+import com.example.data.storage.RealDeviceFileManager
 import com.example.ui.theme.ThemeMode
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +26,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -32,14 +35,18 @@ enum class ScreenDestination {
 }
 
 data class Breadcrumb(
-  val folderId: Long?,
+  val folderId: Long? = null,
+  val path: String = "",
   val title: String
 )
 
 data class UiState(
   val currentScreen: ScreenDestination = ScreenDestination.DASHBOARD,
   val currentFolderId: Long? = null,
-  val breadcrumbs: List<Breadcrumb> = listOf(Breadcrumb(null, "Internal Storage")),
+  val currentFolderPath: String = RealDeviceFileManager.rootStoragePath,
+  val breadcrumbs: List<Breadcrumb> = listOf(
+    Breadcrumb(null, RealDeviceFileManager.rootStoragePath, "Internal Storage")
+  ),
   val selectedCategory: FileCategory = FileCategory.ALL,
   val sortOption: SortOption = SortOption.DATE_DESC,
   val viewMode: ViewMode = ViewMode.LIST,
@@ -53,18 +60,22 @@ data class UiState(
   val previewDecryptedContent: String? = null,
   val isScannerActive: Boolean = false,
   val selectedDocumentFilter: String = "HIGH_CONTRAST",
-  val selectedHighlightFilter: String? = null
+  val selectedHighlightFilter: String? = null,
+  val hasStoragePermission: Boolean = false,
+  val isLoadingFiles: Boolean = false
 )
 
 class FileExplorerViewModel(application: Application) : AndroidViewModel(application) {
 
   val repository = FileRepository(application)
 
-  private val _uiState = MutableStateFlow(UiState())
+  private val _uiState = MutableStateFlow(
+    UiState(hasStoragePermission = repository.hasStoragePermission())
+  )
   val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
-  val storageBreakdown: StateFlow<StorageBreakdown> = repository.storageBreakdownFlow
-    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), StorageBreakdown())
+  private val _storageBreakdown = MutableStateFlow(StorageBreakdown())
+  val storageBreakdown: StateFlow<StorageBreakdown> = _storageBreakdown.asStateFlow()
 
   val backupEntries: StateFlow<List<BackupEntryEntity>> = repository.getAllBackups()
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -75,76 +86,143 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
   private val _snackBarEvent = MutableSharedFlow<String>()
   val snackBarEvent = _snackBarEvent.asSharedFlow()
 
+  private val _realDeviceFiles = MutableStateFlow<List<FileItemEntity>>(emptyList())
+
   // Dynamic files in current context
   @OptIn(ExperimentalCoroutinesApi::class)
   val displayedFiles: StateFlow<List<FileItemEntity>> = combine(
     _uiState,
+    _realDeviceFiles,
     _uiState.flatMapLatest { state ->
       when {
-        state.searchQuery.isNotBlank() -> repository.searchFiles(state.searchQuery)
         state.selectedCategory == FileCategory.VAULT -> repository.getVaultItems()
         state.selectedCategory == FileCategory.TRASH -> repository.getTrashItems()
         state.selectedCategory == FileCategory.FAVORITES -> repository.getFavoriteItems()
-        state.selectedCategory != FileCategory.ALL -> repository.getItemsByCategory(state.selectedCategory.name)
-        else -> repository.getItemsInFolder(state.currentFolderId)
+        else -> flowOf(emptyList())
       }
     }
-  ) { state, rawList ->
-    var filtered = rawList
+  ) { state, realList, roomList ->
+    var raw = when (state.selectedCategory) {
+      FileCategory.VAULT, FileCategory.TRASH, FileCategory.FAVORITES -> roomList
+      else -> realList
+    }
 
     // Filter by active OCR Tag if selected
     if (!state.activeOcrTagFilter.isNullOrBlank()) {
-      filtered = filtered.filter { it.ocrTags.contains(state.activeOcrTagFilter, ignoreCase = true) }
+      raw = raw.filter { it.ocrTags.contains(state.activeOcrTagFilter, ignoreCase = true) }
     }
 
     // Filter by highlight color if selected
     if (!state.selectedHighlightFilter.isNullOrBlank()) {
-      filtered = filtered.filter { it.highlightColor.equals(state.selectedHighlightFilter, ignoreCase = true) }
+      raw = raw.filter { it.highlightColor.equals(state.selectedHighlightFilter, ignoreCase = true) }
     }
 
     // Sort list
     when (state.sortOption) {
-      SortOption.NAME_ASC -> filtered.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
-      SortOption.NAME_DESC -> filtered.sortedWith(compareBy({ !it.isDirectory }, { -it.name.lowercase().hashCode() }))
-      SortOption.DATE_DESC -> filtered.sortedWith(compareBy({ !it.isDirectory }, { -it.updatedAt }))
-      SortOption.DATE_ASC -> filtered.sortedWith(compareBy({ !it.isDirectory }, { it.updatedAt }))
-      SortOption.SIZE_DESC -> filtered.sortedWith(compareBy({ !it.isDirectory }, { -it.sizeBytes }))
-      SortOption.SIZE_ASC -> filtered.sortedWith(compareBy({ !it.isDirectory }, { it.sizeBytes }))
+      SortOption.NAME_ASC -> raw.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+      SortOption.NAME_DESC -> raw.sortedWith(compareBy({ !it.isDirectory }, { -it.name.lowercase().hashCode() }))
+      SortOption.DATE_DESC -> raw.sortedWith(compareBy({ !it.isDirectory }, { -it.updatedAt }))
+      SortOption.DATE_ASC -> raw.sortedWith(compareBy({ !it.isDirectory }, { it.updatedAt }))
+      SortOption.SIZE_DESC -> raw.sortedWith(compareBy({ !it.isDirectory }, { -it.sizeBytes }))
+      SortOption.SIZE_ASC -> raw.sortedWith(compareBy({ !it.isDirectory }, { it.sizeBytes }))
     }
   }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
   init {
     viewModelScope.launch {
       repository.initializeSampleDataIfNeeded()
+      checkPermissionState()
+      refreshStorageBreakdown()
+      loadCurrentFiles()
+    }
+  }
+
+  fun checkPermissionState() {
+    val granted = repository.hasStoragePermission()
+    _uiState.value = _uiState.value.copy(hasStoragePermission = granted)
+    if (granted) {
+      refreshStorageBreakdown()
+      loadCurrentFiles()
+    }
+  }
+
+  fun requestStoragePermission() {
+    repository.requestStoragePermission()
+  }
+
+  fun openAppSettings() {
+    repository.openAppSettings()
+  }
+
+  fun refreshStorageBreakdown() {
+    viewModelScope.launch(Dispatchers.IO) {
+      val breakdown = RealDeviceFileManager.getStorageBreakdown(getApplication())
+      _storageBreakdown.value = breakdown
+    }
+  }
+
+  fun loadCurrentFiles() {
+    val state = _uiState.value
+    if (state.selectedCategory in listOf(FileCategory.VAULT, FileCategory.TRASH, FileCategory.FAVORITES)) {
+      return
+    }
+
+    viewModelScope.launch(Dispatchers.IO) {
+      _uiState.value = _uiState.value.copy(isLoadingFiles = true)
+      val files = when {
+        !repository.hasStoragePermission() -> emptyList()
+        state.searchQuery.isNotBlank() -> repository.searchRealFiles(state.searchQuery, state.currentFolderPath)
+        state.selectedCategory != FileCategory.ALL -> repository.getRealCategoryFiles(state.selectedCategory)
+        else -> repository.getRealDeviceFiles(state.currentFolderPath)
+      }
+      _realDeviceFiles.value = files
+      _uiState.value = _uiState.value.copy(isLoadingFiles = false)
     }
   }
 
   fun navigateTo(screen: ScreenDestination) {
     _uiState.value = _uiState.value.copy(currentScreen = screen)
+    if (screen == ScreenDestination.DASHBOARD) {
+      refreshStorageBreakdown()
+    } else if (screen == ScreenDestination.FILES) {
+      loadCurrentFiles()
+    }
   }
 
   fun openFolder(folder: FileItemEntity) {
-    val newBreadcrumbs = _uiState.value.breadcrumbs + Breadcrumb(folder.id, folder.name)
+    val folderPath = if (folder.path.isNotBlank()) folder.path else folder.name
+    val newBreadcrumbs = _uiState.value.breadcrumbs + Breadcrumb(
+      folderId = folder.id,
+      path = folderPath,
+      title = folder.name
+    )
     _uiState.value = _uiState.value.copy(
       currentFolderId = folder.id,
+      currentFolderPath = folderPath,
       breadcrumbs = newBreadcrumbs,
       currentScreen = ScreenDestination.FILES,
-      selectedCategory = FileCategory.ALL
+      selectedCategory = FileCategory.ALL,
+      searchQuery = ""
     )
+    loadCurrentFiles()
   }
 
   fun navigateToBreadcrumb(target: Breadcrumb) {
-    val index = _uiState.value.breadcrumbs.indexOfFirst { it.folderId == target.folderId }
+    val index = _uiState.value.breadcrumbs.indexOfFirst {
+      if (target.path.isNotBlank()) it.path == target.path else it.folderId == target.folderId
+    }
     val newBreadcrumbs = if (index >= 0) {
       _uiState.value.breadcrumbs.take(index + 1)
     } else {
-      listOf(Breadcrumb(null, "Internal Storage"))
+      listOf(Breadcrumb(null, RealDeviceFileManager.rootStoragePath, "Internal Storage"))
     }
     _uiState.value = _uiState.value.copy(
       currentFolderId = target.folderId,
+      currentFolderPath = if (target.path.isNotBlank()) target.path else RealDeviceFileManager.rootStoragePath,
       breadcrumbs = newBreadcrumbs,
       currentScreen = ScreenDestination.FILES
     )
+    loadCurrentFiles()
   }
 
   fun navigateUpFolder(): Boolean {
@@ -154,8 +232,10 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
       val parentBreadcrumb = newBreadcrumbs.last()
       _uiState.value = _uiState.value.copy(
         currentFolderId = parentBreadcrumb.folderId,
+        currentFolderPath = if (parentBreadcrumb.path.isNotBlank()) parentBreadcrumb.path else RealDeviceFileManager.rootStoragePath,
         breadcrumbs = newBreadcrumbs
       )
+      loadCurrentFiles()
       return true
     }
     return false
@@ -164,27 +244,37 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
   fun selectCategory(category: FileCategory) {
     _uiState.value = _uiState.value.copy(
       selectedCategory = category,
-      currentScreen = if (category == FileCategory.VAULT) ScreenDestination.VAULT else ScreenDestination.FILES,
       currentFolderId = null,
-      breadcrumbs = listOf(Breadcrumb(null, category.label))
+      currentFolderPath = RealDeviceFileManager.rootStoragePath,
+      breadcrumbs = listOf(
+        Breadcrumb(null, RealDeviceFileManager.rootStoragePath, "Internal Storage"),
+        Breadcrumb(null, "", category.label)
+      ),
+      searchQuery = ""
     )
+    loadCurrentFiles()
+  }
+
+  fun setSortOption(sortOption: SortOption) {
+    _uiState.value = _uiState.value.copy(sortOption = sortOption)
+  }
+
+  fun setViewMode(viewMode: ViewMode) {
+    _uiState.value = _uiState.value.copy(viewMode = viewMode)
+  }
+
+  fun toggleViewMode() {
+    val next = if (_uiState.value.viewMode == ViewMode.LIST) ViewMode.GRID else ViewMode.LIST
+    _uiState.value = _uiState.value.copy(viewMode = next)
   }
 
   fun setSearchQuery(query: String) {
     _uiState.value = _uiState.value.copy(searchQuery = query)
+    loadCurrentFiles()
   }
 
   fun setActiveOcrTagFilter(tag: String?) {
     _uiState.value = _uiState.value.copy(activeOcrTagFilter = tag)
-  }
-
-  fun setSortOption(sort: SortOption) {
-    _uiState.value = _uiState.value.copy(sortOption = sort)
-  }
-
-  fun toggleViewMode() {
-    val newMode = if (_uiState.value.viewMode == ViewMode.LIST) ViewMode.GRID else ViewMode.LIST
-    _uiState.value = _uiState.value.copy(viewMode = newMode)
   }
 
   fun setThemeMode(mode: ThemeMode) {
@@ -232,11 +322,16 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
   fun createNewFolder(name: String) {
     viewModelScope.launch {
       val isInVault = _uiState.value.currentScreen == ScreenDestination.VAULT
-      repository.createFolder(
-        name = name,
-        parentFolderId = _uiState.value.currentFolderId,
-        isInVault = isInVault
-      )
+      if (isInVault) {
+        repository.createFolder(
+          name = name,
+          parentFolderId = _uiState.value.currentFolderId,
+          isInVault = true
+        )
+      } else {
+        val created = repository.createRealFolder(_uiState.value.currentFolderPath, name)
+        if (created) loadCurrentFiles()
+      }
       notifyUser("Folder '$name' created")
     }
   }
@@ -246,14 +341,20 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
       val isInVault = _uiState.value.currentScreen == ScreenDestination.VAULT
       val extension = if (name.contains(".")) name.substringAfterLast(".") else "txt"
       val fileName = if (name.contains(".")) name else "$name.txt"
-      repository.createFile(
-        name = fileName,
-        extension = extension,
-        content = content,
-        category = "DOCUMENTS",
-        parentFolderId = _uiState.value.currentFolderId,
-        isInVault = isInVault
-      )
+
+      if (isInVault) {
+        repository.createFile(
+          name = fileName,
+          extension = extension,
+          content = content,
+          category = "DOCUMENTS",
+          parentFolderId = _uiState.value.currentFolderId,
+          isInVault = true
+        )
+      } else {
+        val created = repository.createRealTextFile(_uiState.value.currentFolderPath, fileName, content)
+        if (created) loadCurrentFiles()
+      }
       notifyUser("File '$fileName' created")
     }
   }
@@ -279,10 +380,20 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
     }
   }
 
-  fun renameFile(fileId: Long, newName: String) {
+  fun renameFile(file: FileItemEntity, newName: String) {
     viewModelScope.launch {
-      repository.renameItem(fileId, newName)
-      notifyUser("Renamed to '$newName'")
+      if (file.path.isNotBlank()) {
+        val newPath = repository.renameRealFile(file.path, newName)
+        if (newPath != null) {
+          loadCurrentFiles()
+          notifyUser("Renamed to '$newName'")
+        } else {
+          notifyUser("Rename failed")
+        }
+      } else {
+        repository.renameItem(file.id, newName)
+        notifyUser("Renamed to '$newName'")
+      }
     }
   }
 
@@ -306,10 +417,47 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
     }
   }
 
-  fun deletePermanently(fileId: Long) {
+  fun deletePermanently(file: FileItemEntity) {
     viewModelScope.launch {
-      repository.deletePermanently(fileId)
-      notifyUser("Permanently deleted")
+      if (file.path.isNotBlank()) {
+        val deleted = repository.deleteRealFile(file.path)
+        if (deleted) {
+          loadCurrentFiles()
+          notifyUser("Permanently deleted '${file.name}'")
+        } else {
+          notifyUser("Could not delete file")
+        }
+      } else {
+        repository.deletePermanently(file.id)
+        loadCurrentFiles()
+        notifyUser("Permanently deleted")
+      }
+    }
+  }
+
+  fun deletePermanently(fileId: Long) {
+    val found = _realDeviceFiles.value.find { it.id == fileId }
+    if (found != null) {
+      deletePermanently(found)
+    } else {
+      viewModelScope.launch {
+        repository.deletePermanently(fileId)
+        loadCurrentFiles()
+        notifyUser("Permanently deleted")
+      }
+    }
+  }
+
+  fun renameFile(fileId: Long, newName: String) {
+    val found = _realDeviceFiles.value.find { it.id == fileId }
+    if (found != null) {
+      renameFile(found, newName)
+    } else {
+      viewModelScope.launch {
+        repository.renameItem(fileId, newName)
+        loadCurrentFiles()
+        notifyUser("Renamed to '$newName'")
+      }
     }
   }
 
@@ -342,7 +490,7 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
   fun extractZipArchive(file: FileItemEntity) {
     viewModelScope.launch {
       val count = repository.extractZipArchive(file.id, _uiState.value.currentFolderId)
-      notifyUser("Extracted $count files from '${file.name}' into folder '${file.name.substringBeforeLast(".")}_Extracted'")
+      notifyUser("Extracted $count files from '${file.name}'")
     }
   }
 
@@ -380,6 +528,31 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
       return
     }
 
+    // If it's a real device file and not in vault
+    if (file.path.isNotBlank() && !file.isInVault) {
+      val ext = file.extension.lowercase()
+      val isTextFile = ext in listOf("txt", "md", "json", "xml", "csv", "html", "log", "kt", "java", "py", "js")
+      if (isTextFile) {
+        viewModelScope.launch(Dispatchers.IO) {
+          val text = repository.readRealFileText(file.path) ?: ""
+          _uiState.value = _uiState.value.copy(
+            previewFile = file,
+            previewDecryptedContent = text
+          )
+        }
+      } else {
+        // Launch external app
+        val opened = repository.openFileExternally(file.path)
+        if (!opened) {
+          _uiState.value = _uiState.value.copy(
+            previewFile = file,
+            previewDecryptedContent = "[Opening with default system viewer...]"
+          )
+        }
+      }
+      return
+    }
+
     val decrypted = if (file.isInVault && !file.content.isNullOrEmpty()) {
       repository.decryptVaultContent(file.content, _uiState.value.vaultMasterPin)
     } else {
@@ -396,11 +569,17 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
     _uiState.value = _uiState.value.copy(previewFile = null, previewDecryptedContent = null)
   }
 
-  fun saveFileContent(fileId: Long, newContent: String) {
-    viewModelScope.launch {
-      repository.updateFileContent(fileId, newContent)
-      _uiState.value = _uiState.value.copy(previewDecryptedContent = newContent)
-      notifyUser("Changes saved successfully")
+  fun saveFileContent(file: FileItemEntity, newContent: String) {
+    viewModelScope.launch(Dispatchers.IO) {
+      if (file.path.isNotBlank() && !file.isInVault) {
+        repository.saveRealFileText(file.path, newContent)
+        _uiState.value = _uiState.value.copy(previewDecryptedContent = newContent)
+        notifyUser("Saved '${file.name}' to storage")
+      } else {
+        repository.updateFileContent(file.id, newContent)
+        _uiState.value = _uiState.value.copy(previewDecryptedContent = newContent)
+        notifyUser("Changes saved successfully")
+      }
     }
   }
 

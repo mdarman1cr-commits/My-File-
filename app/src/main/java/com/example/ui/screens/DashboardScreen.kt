@@ -77,6 +77,8 @@ import com.example.ui.components.ColorZipApkCategory
 import com.example.ui.components.FilesCleanupDialog
 import com.example.ui.components.ManageOnPcDialog
 import com.example.ui.components.SdCardStatusDialog
+import com.example.ui.components.FileFormatUtils
+import com.example.ui.components.StoragePermissionBanner
 import com.example.ui.viewmodel.FileExplorerViewModel
 import com.example.ui.viewmodel.ScreenDestination
 
@@ -91,6 +93,8 @@ fun DashboardScreen(
   onOpenSearch: () -> Unit,
   modifier: Modifier = Modifier
 ) {
+  val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+  val storageBreakdown by viewModel.storageBreakdown.collectAsStateWithLifecycle()
   var showCleanupDialog by remember { mutableStateOf(false) }
   var showPcDialog by remember { mutableStateOf(false) }
   var showSdCardDialog by remember { mutableStateOf(false) }
@@ -103,7 +107,7 @@ fun DashboardScreen(
       .testTag("dashboard_screen"),
     verticalArrangement = Arrangement.spacedBy(16.dp)
   ) {
-    // 1. Top Bar: "File Manager" with Search and Settings
+    // 1. Top Bar: "My File" with Search and Settings
     item {
       Row(
         modifier = Modifier
@@ -116,12 +120,12 @@ fun DashboardScreen(
           text = buildAnnotatedString {
             withStyle(
               SpanStyle(
-                color = Color(0xFF2F69FF),
+                color = Color(0xFF1976D2),
                 fontWeight = FontWeight.Bold,
                 fontSize = 24.sp
               )
             ) {
-              append("File")
+              append("My ")
             }
             withStyle(
               SpanStyle(
@@ -130,7 +134,7 @@ fun DashboardScreen(
                 fontSize = 24.sp
               )
             ) {
-              append(" Manager")
+              append("File")
             }
           },
           style = MaterialTheme.typography.titleLarge
@@ -161,6 +165,16 @@ fun DashboardScreen(
             )
           }
         }
+      }
+    }
+
+    // Storage Permission banner if not granted
+    if (!uiState.hasStoragePermission) {
+      item {
+        StoragePermissionBanner(
+          onGrantPermission = { viewModel.requestStoragePermission() },
+          onOpenSettings = { viewModel.openAppSettings() }
+        )
       }
     }
 
@@ -270,7 +284,7 @@ fun DashboardScreen(
         ) {
           StorageTileCard(
             title = "Internal",
-            subtitle = "92.29 / 128 GB",
+            subtitle = if (uiState.hasStoragePermission) "${FileFormatUtils.formatFileSize(storageBreakdown.usedBytes)} / ${FileFormatUtils.formatFileSize(storageBreakdown.totalCapacityBytes)}" else "Permission required",
             icon = Icons.Default.PhoneAndroid,
             badgeColor = ColorInternalStorage,
             onClick = {
@@ -333,7 +347,7 @@ fun DashboardScreen(
       ) {
         StorageTileCard(
           title = "Files Cleanup",
-          subtitle = "92.29 of 128 GB",
+          subtitle = if (uiState.hasStoragePermission) "${FileFormatUtils.formatFileSize(storageBreakdown.usedBytes)} of ${FileFormatUtils.formatFileSize(storageBreakdown.totalCapacityBytes)}" else "Permission required",
           icon = Icons.Default.AutoAwesome,
           badgeColor = ColorCleanupTool,
           onClick = { showCleanupDialog = true },

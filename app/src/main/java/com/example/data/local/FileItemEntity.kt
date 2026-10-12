@@ -10,7 +10,8 @@ import androidx.room.PrimaryKey
     Index(value = ["parentFolderId"]),
     Index(value = ["isInVault"]),
     Index(value = ["isTrash"]),
-    Index(value = ["category"])
+    Index(value = ["category"]),
+    Index(value = ["path"])
   ]
 )
 data class FileItemEntity(
@@ -20,6 +21,7 @@ data class FileItemEntity(
   val extension: String,
   val isDirectory: Boolean = false,
   val parentFolderId: Long? = null,
+  val path: String = "",
   val sizeBytes: Long = 0L,
   val createdAt: Long = System.currentTimeMillis(),
   val updatedAt: Long = System.currentTimeMillis(),

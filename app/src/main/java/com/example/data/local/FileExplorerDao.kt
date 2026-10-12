@@ -76,6 +76,9 @@ interface FileExplorerDao {
   @Query("DELETE FROM file_items")
   suspend fun clearAllFiles()
 
+  @Query("DELETE FROM file_items WHERE path = '' AND isInVault = 0")
+  suspend fun clearDemoFiles()
+
   // Backups
   @Query("SELECT * FROM backup_entries ORDER BY createdAt DESC")
   fun getAllBackups(): Flow<List<BackupEntryEntity>>

@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "My File Explorer"
+rootProject.name = "My File"
 
 include(":app")

@@ -58,6 +58,7 @@ import com.example.ui.components.FileItemGrid
 import com.example.ui.components.FileItemRow
 import com.example.ui.components.HighlightColorPickerDialog
 import com.example.ui.components.RenameDialog
+import com.example.ui.components.StoragePermissionBanner
 import com.example.ui.components.TopSearchBar
 import com.example.ui.theme.ThemeMode
 import com.example.ui.viewmodel.FileExplorerViewModel
@@ -124,6 +125,15 @@ fun FilesBrowserScreen(
         canNavigateUp = uiState.breadcrumbs.size > 1
       )
 
+      // Storage Permission Banner if not granted
+      if (!uiState.hasStoragePermission && uiState.selectedCategory !in listOf(FileCategory.VAULT, FileCategory.TRASH)) {
+        StoragePermissionBanner(
+          onGrantPermission = { viewModel.requestStoragePermission() },
+          onOpenSettings = { viewModel.openAppSettings() },
+          modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+        )
+      }
+
       // Trash bin empty button if viewing recycle bin
       if (uiState.selectedCategory == FileCategory.TRASH && files.isNotEmpty()) {
         Row(
@@ -170,17 +180,36 @@ fun FilesBrowserScreen(
               )
             }
             Text(
-              text = if (uiState.searchQuery.isNotBlank()) "No files match your query" else "This folder is empty",
+              text = if (!uiState.hasStoragePermission && uiState.selectedCategory !in listOf(FileCategory.VAULT, FileCategory.TRASH)) {
+                "Storage Permission Required"
+              } else if (uiState.searchQuery.isNotBlank()) {
+                "No files match your query"
+              } else {
+                "This folder is empty"
+              },
               style = MaterialTheme.typography.titleMedium,
               color = MaterialTheme.colorScheme.onSurface
             )
             Text(
-              text = if (uiState.searchQuery.isNotBlank()) "Try searching by OCR keywords or clearing filters" else "Create a new folder or scan a document to get started",
+              text = if (!uiState.hasStoragePermission && uiState.selectedCategory !in listOf(FileCategory.VAULT, FileCategory.TRASH)) {
+                "Allow file management access to view and browse your device storage"
+              } else if (uiState.searchQuery.isNotBlank()) {
+                "Try searching by OCR keywords or clearing filters"
+              } else {
+                "Create a new folder or file to get started"
+              },
               style = MaterialTheme.typography.bodySmall,
               color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            if (uiState.searchQuery.isBlank() && uiState.selectedCategory != FileCategory.TRASH) {
+            if (!uiState.hasStoragePermission && uiState.selectedCategory !in listOf(FileCategory.VAULT, FileCategory.TRASH)) {
+              Button(
+                onClick = { viewModel.requestStoragePermission() },
+                modifier = Modifier.testTag("empty_allow_permission_button")
+              ) {
+                Text("Allow Access / परमिशन दें")
+              }
+            } else if (uiState.searchQuery.isBlank() && uiState.selectedCategory != FileCategory.TRASH) {
               Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                   onClick = { showCreateFolderDialog = true },
@@ -214,8 +243,7 @@ fun FilesBrowserScreen(
                 onMoveToVault = { viewModel.moveIntoVault(file.id) },
                 onExtractFromVault = { viewModel.extractFromVault(file.id) },
                 onDelete = {
-                  if (file.isTrash) viewModel.deletePermanently(file.id)
-                  else viewModel.moveToTrash(file.id)
+                  viewModel.deletePermanently(file)
                 },
                 onRestore = { viewModel.restoreFromTrash(file.id) },
                 onShowDetails = { fileToShowDetails = file },
@@ -354,7 +382,7 @@ fun FilesBrowserScreen(
       RenameDialog(
         currentName = target.name,
         onDismiss = { fileToRename = null },
-        onConfirm = { viewModel.renameFile(target.id, it) }
+        onConfirm = { viewModel.renameFile(target, it) }
       )
     }
 
